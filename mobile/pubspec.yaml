@@ -15,7 +15,9 @@ dependencies:
   uuid: ^4.5.1
   image_picker: ^1.2.0
   path_provider: ^2.1.5
-  flutter_secure_storage: ^11.2.0
+  # v11 requires win32/Dart 3.10 through its Windows implementation;
+  # Flutter 3.35.7 ships Dart 3.9.2, so keep the v10 secure-storage line.
+  flutter_secure_storage: ^10.3.4
   url_launcher: ^6.3.2
   supabase_flutter: ^2.18.3
   # Compatible with the Flutter 3.35/Dart 3.9 bootstrap target. Upgrade only
