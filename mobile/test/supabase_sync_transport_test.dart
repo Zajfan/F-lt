@@ -254,7 +254,7 @@ void main() {
   });
 }
 
-SupabaseSyncTransport _failingTransport(FakeRpcFailure failure) =>
+SupabaseSyncTransport _failingTransport(Object failure) =>
     SupabaseSyncTransport.forTesting(
       companyId: _companyId,
       sessionProvider: () => Object(),

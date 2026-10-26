@@ -6,7 +6,6 @@ import 'package:falt/domain/job.dart';
 import 'package:falt/sync/sync_context.dart';
 import 'package:falt/sync/sync_models.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sqflite_sqlcipher/sqflite.dart' show OpenDatabaseOptions;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 const accountA = '11111111-1111-4111-8111-111111111111';

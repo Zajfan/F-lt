@@ -30,7 +30,7 @@ Future<void> main() async {
   if (config.isLive) {
     await Supabase.initialize(
       url: config.supabaseUrl,
-      anonKey: config.publishableKey,
+      publishableKey: config.publishableKey,
     );
     client = Supabase.instance.client;
     backgroundSyncScheduler = BackgroundSyncScheduler();

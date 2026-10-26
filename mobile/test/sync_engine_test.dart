@@ -7,7 +7,6 @@ import 'package:falt/sync/sync_engine.dart';
 import 'package:falt/sync/sync_models.dart';
 import 'package:falt/sync/sync_transport.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sqflite_sqlcipher/sqflite.dart' show OpenDatabaseOptions;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 const accountId = '11111111-1111-4111-8111-111111111111';
@@ -182,7 +181,7 @@ void main() {
 
   test('transient pull failures remain retryable for background scheduling', () async {
     final transport = FakeTransport()
-      ..onPull = (_, __) async => throw const SyncTransientException('offline');
+      ..onPull = (_, _) async => throw const SyncTransientException('offline');
 
     final result = await SyncEngine(store: store, transport: transport).runOnce();
 

@@ -127,6 +127,6 @@ class _SupabaseAuthBackend implements AuthBackend {
       user == null ? null : AuthUser(id: user.id, email: user.email);
 }
 
-String sanitizeAuthError(Object _error) {
+String sanitizeAuthError(Object error) {
   return 'Inloggningen kunde inte genomföras. Kontrollera uppgifterna och försök igen.';
 }

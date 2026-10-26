@@ -193,7 +193,8 @@ class LocalStore {
     String kind,
     Map<String, dynamic> value,
   ) {
-    if (_syncContext == null || kind != 'job') return value;
+    final syncContext = _syncContext;
+    if (syncContext == null || kind != 'job') return value;
     if (value['deleted'] == true) return <String, dynamic>{};
 
     final payload = <String, dynamic>{};
@@ -216,7 +217,7 @@ class LocalStore {
 
     final assigneeId = value['assigneeId'] ??
         value['assignee_id'] ??
-        _syncContext!.accountId;
+        syncContext.accountId;
     SyncContext.requireStableUuid('assignee_id', assigneeId as String);
     payload['assignee_id'] = assigneeId;
 
@@ -444,7 +445,8 @@ class LocalStore {
   }
 
   Future<void> saveJob(Job job) async {
-    final localJob = _syncContext == null || job.assigneeId != null
+    final syncContext = _syncContext;
+    final localJob = syncContext == null || job.assigneeId != null
         ? job
         : Job(
             id: job.id,
@@ -452,7 +454,7 @@ class LocalStore {
             customerId: job.customerId,
             address: job.address,
             assignee: job.assignee,
-            assigneeId: _syncContext!.accountId,
+            assigneeId: syncContext.accountId,
             startsAt: job.startsAt,
             endsAt: job.endsAt,
             status: job.status,

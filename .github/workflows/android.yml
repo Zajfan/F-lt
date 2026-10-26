@@ -34,6 +34,9 @@ jobs:
           if [[ ! -f android/gradle/wrapper/gradle-wrapper.jar || ! -x android/gradlew ]]; then
             flutter create --platforms=android --org se.falt --project-name falt --no-pub .
           fi
+          if [[ -f test/widget_test.dart ]] && grep -q "MyApp" test/widget_test.dart; then
+            rm -f test/widget_test.dart
+          fi
       - name: Resolve Dart dependencies
         run: flutter pub get
       - name: Analyze Dart code

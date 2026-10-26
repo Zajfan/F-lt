@@ -78,7 +78,7 @@ void main() {
     await gateway.signOut();
     await Future<void>.delayed(Duration.zero);
 
-    expect(user.id, DemoAuthGateway.demoUserId);
+    expect(user?.id, DemoAuthGateway.demoUserId);
     expect(states.map((state) => state?.id), [DemoAuthGateway.demoUserId, null]);
   });
 

@@ -519,7 +519,7 @@ class _CompanyOnboardingState extends State<_CompanyOnboarding> {
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
-              value: _profile,
+              initialValue: _profile,
               decoration: const InputDecoration(labelText: 'Profil'),
               items: const [
                 DropdownMenuItem(value: 'Tak', child: Text('Tak')),
