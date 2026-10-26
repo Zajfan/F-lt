@@ -31,9 +31,9 @@ class _CompanyPageState extends State<CompanyPage> {
       final data =
           await widget.store.get('company', 'local') ??
           {
-            'name': 'Lindqvist El',
+            'name': 'Ditt företag',
             'organisation': '',
-            'address': 'Göteborg',
+            'address': '',
             'email': '',
             'phone': '',
           };
@@ -69,7 +69,7 @@ class _CompanyPageState extends State<CompanyPage> {
               padding: const EdgeInsets.all(20),
               children: [
                 const Text(
-                  'Uppgifterna sparas på den här enheten. Företagskonto, inbjudningar och serverbehörigheter är ännu inte anslutna.',
+                  'Uppgifterna sparas på den här enheten och används i företagets arbetsyta.',
                 ),
                 const SizedBox(height: 20),
                 for (final entry in labels.entries)

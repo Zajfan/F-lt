@@ -1,47 +1,148 @@
 import 'dart:convert';
 import 'package:path/path.dart' as path;
-import 'package:sqflite/sqflite.dart';
+import 'package:sqflite_sqlcipher/sqflite.dart';
 import 'package:uuid/uuid.dart';
+import 'database_key.dart';
 import '../domain/estimate.dart';
 import '../domain/job.dart';
 import '../domain/work_log.dart';
+import '../sync/sync_context.dart';
+import '../sync/sync_models.dart';
 
-/// Single-device evaluation store. Not a multi-user sync implementation.
 /// Business writes and their outbox records commit atomically.
 class LocalStore {
-  LocalStore._(this._db);
+  LocalStore._(this._db, this._syncContext);
   final Database _db;
+  final SyncContext? _syncContext;
+  String get _accountId => _syncContext?.accountId ?? 'demo';
+  String get _companyId => _syncContext?.companyId ?? 'demo';
+  String get _deviceId => _syncContext?.deviceId ?? 'demo';
+  List<Object?> get _scopeArgs => [_accountId, _companyId];
+  static const _scopeWhere = 'account_id = ? AND company_id = ?';
+
+  SyncContext _requireSyncContext() {
+    final context = _syncContext;
+    if (context == null) {
+      throw StateError('An authenticated sync context is required.');
+    }
+    context.validate();
+    return context;
+  }
+
+  String _metaKey(String key) => '$_accountId:$_companyId:$key';
+
   static Future<LocalStore> open({
     DatabaseFactory? factory,
     String? databasePath,
+    SyncContext? syncContext,
+    DatabaseKeyProvider? keyProvider,
+    String? databasePassword,
   }) async {
+    syncContext?.validate();
     final selectedFactory = factory ?? databaseFactory;
+    final password = databasePassword ??
+        (factory == null
+            ? await (keyProvider ?? DatabaseKeyProvider.production())
+                .loadOrCreate()
+            : null);
     final db = await selectedFactory.openDatabase(
       databasePath ??
           path.join(await selectedFactory.getDatabasesPath(), 'falt.db'),
-      options: OpenDatabaseOptions(
-        version: 1,
+      options: SqlCipherOpenDatabaseOptions(
+        version: 3,
+        password: password,
         onConfigure: (db) async {
           await db.execute('PRAGMA foreign_keys = ON');
         },
-        onCreate: (db, version) async {
-          await db.execute(
-            'CREATE TABLE records (kind TEXT NOT NULL, id TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(kind,id))',
-          );
-          await db.execute(
-            'CREATE TABLE outbox (id TEXT PRIMARY KEY, kind TEXT NOT NULL, entity_id TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL)',
-          );
-          await db.execute(
-            'CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)',
-          );
+        onCreate: (db, version) => _createV2(db),
+        onUpgrade: (db, oldVersion, newVersion) async {
+          var migratedVersion = oldVersion;
+          if (migratedVersion < 2) {
+            await db.execute('ALTER TABLE records RENAME TO records_v1');
+            await db.execute('ALTER TABLE outbox RENAME TO outbox_v1');
+            await _createRecords(db);
+            await _createOutbox(db);
+            await db.execute(
+              "INSERT INTO records (account_id, company_id, kind, id, payload) SELECT 'demo', 'demo', kind, id, payload FROM records_v1",
+            );
+            await db.execute(
+              "INSERT INTO outbox (id, account_id, company_id, device_id, kind, entity_id, payload, created_at) SELECT id, 'demo', 'demo', 'demo', kind, entity_id, payload, created_at FROM outbox_v1",
+            );
+            await db.execute('DROP TABLE records_v1');
+            await db.execute('DROP TABLE outbox_v1');
+            await _createSyncTables(db);
+            // v1 metadata belongs to the evaluation partition.
+            await db.execute("UPDATE meta SET key = 'demo:demo:' || key");
+            migratedVersion = 2;
+          }
+          if (migratedVersion < 3) {
+            await _normalizeLegacyJobRecords(db);
+            migratedVersion = 3;
+          }
+          if (newVersion > 3) {
+            throw StateError('Unsupported store version: $newVersion');
+          }
         },
       ),
     );
-    return LocalStore._(db);
+    return LocalStore._(db, syncContext);
+  }
+
+  static Future<void> _createV2(Database db) async {
+    await _createRecords(db);
+    await _createOutbox(db);
+    await db.execute('CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+    await _createSyncTables(db);
+  }
+
+  static Future<void> _createRecords(Database db) => db.execute(
+    'CREATE TABLE records (account_id TEXT NOT NULL, company_id TEXT NOT NULL, kind TEXT NOT NULL, id TEXT NOT NULL, payload TEXT NOT NULL, server_version INTEGER NOT NULL DEFAULT 0, deleted_at TEXT, PRIMARY KEY(account_id, company_id, kind, id))',
+  );
+
+  static Future<void> _createOutbox(Database db) => db.execute(
+    "CREATE TABLE outbox (id TEXT PRIMARY KEY, account_id TEXT NOT NULL, company_id TEXT NOT NULL, device_id TEXT NOT NULL, kind TEXT NOT NULL, entity_id TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL, expected_version INTEGER NOT NULL DEFAULT 0, operation_kind TEXT NOT NULL DEFAULT 'upsert', status TEXT NOT NULL DEFAULT 'pending', attempt_count INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT, last_error TEXT)",
+  );
+
+  static Future<void> _createSyncTables(Database db) async {
+    await db.execute(
+      'CREATE TABLE sync_conflicts (account_id TEXT NOT NULL, company_id TEXT NOT NULL, operation_id TEXT NOT NULL, server_version INTEGER NOT NULL, server_payload TEXT, detected_at TEXT NOT NULL, PRIMARY KEY(account_id, company_id, operation_id))',
+    );
+    await db.execute(
+      'CREATE TABLE sync_cursors (account_id TEXT NOT NULL, company_id TEXT NOT NULL, cursor INTEGER NOT NULL, PRIMARY KEY(account_id, company_id))',
+    );
+  }
+
+  static Future<void> _normalizeLegacyJobRecords(Database db) async {
+    final rows = await db.query(
+      'records',
+      columns: ['account_id', 'company_id', 'kind', 'id', 'payload'],
+      where: "kind = 'job'",
+    );
+    for (final row in rows) {
+      final payload = jsonDecode(row['payload'] as String) as Map<String, dynamic>;
+      final isSqlJob = payload.containsKey('version') &&
+          (payload.containsKey('customer_id') ||
+              payload.containsKey('assignee_id') ||
+              payload.containsKey('starts_at') ||
+              payload.containsKey('ends_at'));
+      if (!isSqlJob) continue;
+      final job = Job.fromJson(payload);
+      final normalized = <String, Object?>{
+        ...job.toJson(),
+        'revision': payload['version'] as int? ?? job.revision,
+      };
+      await db.update(
+        'records',
+        {'payload': jsonEncode(normalized)},
+        where: 'account_id = ? AND company_id = ? AND kind = ? AND id = ?',
+        whereArgs: [row['account_id'], row['company_id'], row['kind'], row['id']],
+      );
+    }
   }
 
   Future<List<Map<String, dynamic>>> list(String kind) async =>
-      (await _db.query('records', where: 'kind = ?', whereArgs: [kind]))
+      (await _db.query('records', where: '$_scopeWhere AND kind = ? AND deleted_at IS NULL',
+          whereArgs: [..._scopeArgs, kind]))
           .map(
             (row) =>
                 jsonDecode(row['payload'] as String) as Map<String, dynamic>,
@@ -53,44 +154,327 @@ class LocalStore {
     Map<String, dynamic> value,
   ) async {
     final payload = jsonEncode(value);
+    final outboxPayload = jsonEncode(_outboxPayload(kind, value));
+    final id = value['id'] as String;
+    if (_syncContext != null && (kind == 'customer' || kind == 'job')) {
+      SyncContext.requireStableUuid('entityId', id);
+    }
+    final previous = await txn.query('records', columns: ['server_version'],
+      where: '$_scopeWhere AND kind = ? AND id = ?',
+      whereArgs: [..._scopeArgs, kind, id]);
+    final expectedVersion = previous.isEmpty ? 0 : previous.single['server_version'] as int;
+    final isDelete = value['deleted'] == true;
     await txn.insert('records', {
+      'account_id': _accountId,
+      'company_id': _companyId,
       'kind': kind,
-      'id': value['id'],
+      'id': id,
       'payload': payload,
+      'server_version': expectedVersion,
+      'deleted_at': isDelete ? DateTime.now().toUtc().toIso8601String() : null,
     }, conflictAlgorithm: ConflictAlgorithm.replace);
+    final operationId = const Uuid().v4();
+    SyncContext.requireStableUuid('operationId', operationId);
     await txn.insert('outbox', {
-      'id': const Uuid().v4(),
+      'id': operationId,
+      'account_id': _accountId,
+      'company_id': _companyId,
+      'device_id': _deviceId,
       'kind': kind,
-      'entity_id': value['id'],
-      'payload': payload,
+      'entity_id': id,
+      'payload': outboxPayload,
       'created_at': DateTime.now().toUtc().toIso8601String(),
+      'expected_version': expectedVersion,
+      'operation_kind': isDelete ? SyncOperationKind.delete.name : SyncOperationKind.upsert.name,
     });
+  }
+
+  Map<String, dynamic> _outboxPayload(
+    String kind,
+    Map<String, dynamic> value,
+  ) {
+    if (_syncContext == null || kind != 'job') return value;
+    if (value['deleted'] == true) return <String, dynamic>{};
+
+    final payload = <String, dynamic>{};
+    void copy(String wireKey, Iterable<String> localKeys) {
+      for (final key in localKeys) {
+        if (value.containsKey(key) && value[key] != null) {
+          payload[wireKey] = value[key];
+          return;
+        }
+      }
+    }
+
+    copy('customer_id', ['customerId', 'customer_id']);
+    copy('title', ['title']);
+    copy('address', ['address']);
+    copy('instructions', ['instructions']);
+    copy('quote_id', ['quoteId', 'quote_id']);
+    copy('starts_at', ['startsAt', 'starts_at']);
+    copy('ends_at', ['endsAt', 'ends_at']);
+
+    final assigneeId = value['assigneeId'] ??
+        value['assignee_id'] ??
+        _syncContext!.accountId;
+    SyncContext.requireStableUuid('assignee_id', assigneeId as String);
+    payload['assignee_id'] = assigneeId;
+
+    final status = value['status'];
+    if (status is String) {
+      payload['status'] = status == 'inProgress' ? 'in_progress' : status;
+    }
+    return payload;
   }
 
   Future<void> put(String kind, Map<String, dynamic> value) =>
       _db.transaction((txn) => _write(txn, kind, value));
   Future<int> get pendingCount async =>
       Sqflite.firstIntValue(
-        await _db.rawQuery('SELECT COUNT(*) FROM outbox'),
+        await _db.rawQuery('SELECT COUNT(*) FROM outbox WHERE $_scopeWhere', _scopeArgs),
       ) ??
       0;
 
+  Future<List<SyncOperation>> pendingOperations({int limit = 50}) async {
+    _requireSyncContext();
+    if (limit <= 0) return [];
+    return _db.transaction((txn) async {
+      final rows = await txn.query('outbox',
+        where: "$_scopeWhere AND kind IN ('customer', 'job') AND status IN ('pending', 'retry') AND (next_attempt_at IS NULL OR next_attempt_at <= ?)",
+        whereArgs: [..._scopeArgs, DateTime.now().toUtc().toIso8601String()],
+        orderBy: 'created_at ASC, rowid ASC', limit: limit);
+      final operations = <SyncOperation>[];
+      for (final row in rows) {
+        var payload = Map<String, dynamic>.from(
+          jsonDecode(row['payload'] as String) as Map,
+        );
+        if (row['kind'] == 'job') {
+          final normalized = _outboxPayload('job', payload);
+          final encoded = jsonEncode(normalized);
+          if (encoded != row['payload']) {
+            await txn.update(
+              'outbox',
+              {'payload': encoded},
+              where: '$_scopeWhere AND id = ?',
+              whereArgs: [..._scopeArgs, row['id']],
+            );
+            payload = normalized;
+          }
+        }
+        operations.add(SyncOperation.fromJson({
+          'operation_id': row['id'],
+          'company_id': row['company_id'],
+          'device_id': row['device_id'],
+          'entity_kind': row['kind'],
+          'entity_id': row['entity_id'],
+          'expected_version': row['expected_version'],
+          'operation_kind': row['operation_kind'],
+          'payload': payload,
+          'created_at_utc': row['created_at'],
+          'attempt_count': row['attempt_count'],
+          'next_attempt_at_utc': row['next_attempt_at'],
+          'last_error': row['last_error'],
+          'status': row['status'],
+        }));
+      }
+      return operations;
+    });
+  }
+
+  Future<void> acknowledgeOperation(String operationId, {
+    required int acceptedVersion,
+  }) async {
+    _requireSyncContext();
+    SyncContext.requireStableUuid('operationId', operationId);
+    if (acceptedVersion < 0) {
+      throw ArgumentError.value(acceptedVersion, 'acceptedVersion');
+    }
+    await _db.transaction((txn) async {
+      final rows = await txn.rawQuery(
+        'SELECT rowid, kind, entity_id, expected_version FROM outbox WHERE $_scopeWhere AND id = ?',
+        [..._scopeArgs, operationId]);
+      if (rows.isEmpty) return;
+      final operation = rows.single;
+      final kind = operation['kind'] as String;
+      final entityId = operation['entity_id'] as String;
+      if (kind == 'customer' || kind == 'job') {
+        if (acceptedVersion <= (operation['expected_version'] as int)) {
+          throw ArgumentError.value(acceptedVersion, 'acceptedVersion',
+            'Must advance the operation expected version');
+        }
+        final records = await txn.query('records', columns: ['server_version'],
+          where: '$_scopeWhere AND kind = ? AND id = ?',
+          whereArgs: [..._scopeArgs, kind, entityId]);
+        if (records.isEmpty ||
+            (records.single['server_version'] as int) > acceptedVersion) {
+          throw StateError('The acknowledged record version is inconsistent.');
+        }
+        await txn.update('records', {'server_version': acceptedVersion},
+          where: '$_scopeWhere AND kind = ? AND id = ?',
+          whereArgs: [..._scopeArgs, kind, entityId]);
+        await txn.rawUpdate(
+          "UPDATE outbox SET expected_version = ? WHERE $_scopeWhere AND kind = ? AND entity_id = ? AND rowid > ? AND status IN ('pending', 'retry')",
+          [acceptedVersion, ..._scopeArgs, kind, entityId, operation['rowid']]);
+      }
+      await txn.delete('outbox', where: '$_scopeWhere AND id = ?',
+        whereArgs: [..._scopeArgs, operationId]);
+    });
+  }
+
+  Future<void> scheduleRetry(String operationId, {
+    required DateTime nextAttemptAtUtc,
+    required String error,
+  }) async {
+    _requireSyncContext();
+    SyncContext.requireStableUuid('operationId', operationId);
+    await _db.rawUpdate(
+      "UPDATE outbox SET attempt_count = attempt_count + 1, last_error = ?, next_attempt_at = ?, status = 'retry' WHERE $_scopeWhere AND id = ? AND status IN ('pending', 'retry')",
+      [error, nextAttemptAtUtc.toUtc().toIso8601String(), ..._scopeArgs, operationId]);
+  }
+
+  Future<void> recordConflict(SyncConflict conflict) async {
+    _requireSyncContext();
+    await _db.transaction((txn) async {
+      final rows = await txn.query('outbox', columns: ['id'],
+        where: '$_scopeWhere AND id = ? AND company_id = ? AND device_id = ?',
+        whereArgs: [..._scopeArgs, conflict.operation.operationId,
+          conflict.operation.companyId, conflict.operation.deviceId]);
+      if (rows.isEmpty) throw StateError('Operation is not in the active context.');
+      await txn.insert('sync_conflicts', {
+        'account_id': _accountId,
+        'company_id': _companyId,
+        'operation_id': conflict.operation.operationId,
+        'server_version': conflict.serverVersion,
+        'server_payload': conflict.serverPayload == null ? null : jsonEncode(conflict.serverPayload),
+        'detected_at': conflict.detectedAtUtc.toUtc().toIso8601String(),
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      await txn.update('outbox', {'status': SyncOperationStatus.conflict.name},
+        where: '$_scopeWhere AND id = ?',
+        whereArgs: [..._scopeArgs, conflict.operation.operationId]);
+    });
+  }
+
+  Future<int> syncCursor() async {
+    _requireSyncContext();
+    return _readCursor(_db);
+  }
+
+  Future<int> _readCursor(DatabaseExecutor db) async {
+    final rows = await db.query('sync_cursors', columns: ['cursor'],
+      where: _scopeWhere, whereArgs: _scopeArgs);
+    return rows.isEmpty ? 0 : rows.single['cursor'] as int;
+  }
+
+  Future<void> applyPullPage(SyncPullPage page) async {
+    _requireSyncContext();
+    await _db.transaction((txn) async {
+      final storedCursor = await _readCursor(txn);
+      if (page.nextCursor <= storedCursor) {
+        throw StateError('Pull cursor must advance.');
+      }
+      var lastCursor = storedCursor;
+      for (final change in page.changes) {
+        if (change.cursor <= lastCursor || change.cursor > page.nextCursor) {
+          throw ArgumentError('Pull changes must have increasing cursors within the page.');
+        }
+        lastCursor = change.cursor;
+        if (change.deletedAtUtc == null &&
+            (change.payload == null || change.payload!['id'] != change.entityId)) {
+          throw ArgumentError('Pull payload must contain the matching entity ID.');
+        }
+        final kind = change.entityKind.name;
+        final existing = await txn.query('records', columns: ['server_version'],
+          where: '$_scopeWhere AND kind = ? AND id = ?',
+          whereArgs: [..._scopeArgs, kind, change.entityId]);
+        if (existing.isNotEmpty &&
+            (existing.single['server_version'] as int) >= change.version) {
+          continue;
+        }
+        final unresolved = await txn.query('outbox', columns: ['id'],
+          where: "$_scopeWhere AND kind = ? AND entity_id = ? AND status != 'acknowledged'",
+          whereArgs: [..._scopeArgs, kind, change.entityId]);
+        if (unresolved.isNotEmpty) {
+          for (final operation in unresolved) {
+            final operationId = operation['id'] as String;
+            final recorded = await txn.query('sync_conflicts',
+              columns: ['server_version'],
+              where: '$_scopeWhere AND operation_id = ?',
+              whereArgs: [..._scopeArgs, operationId]);
+            if (recorded.isNotEmpty &&
+                (recorded.single['server_version'] as int) >= change.version) {
+              continue;
+            }
+            await txn.insert('sync_conflicts', {
+              'account_id': _accountId,
+              'company_id': _companyId,
+              'operation_id': operationId,
+              'server_version': change.version,
+              'server_payload': change.payload == null ? null : jsonEncode(change.payload),
+              'detected_at': DateTime.now().toUtc().toIso8601String(),
+            }, conflictAlgorithm: ConflictAlgorithm.replace);
+          }
+          continue;
+        }
+        await txn.insert('records', {
+          'account_id': _accountId,
+          'company_id': _companyId,
+          'kind': kind,
+          'id': change.entityId,
+          'payload': jsonEncode(_localRecordPayload(change)),
+          'server_version': change.version,
+          'deleted_at': change.deletedAtUtc?.toUtc().toIso8601String(),
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+      await txn.insert('sync_cursors', {
+        'account_id': _accountId, 'company_id': _companyId, 'cursor': page.nextCursor,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    });
+  }
+
+  Map<String, dynamic> _localRecordPayload(SyncChange change) {
+    final payload = change.payload;
+    if (payload == null || change.entityKind != SyncEntityKind.job) {
+      return payload ?? <String, dynamic>{};
+    }
+    final job = Job.fromJson(payload);
+    return {
+      ...Map<String, dynamic>.from(job.toJson()),
+      'revision': change.version,
+    };
+  }
+
   Future<void> saveJob(Job job) async {
-    if (!job.endsAt.isAfter(job.startsAt)) {
+    final localJob = _syncContext == null || job.assigneeId != null
+        ? job
+        : Job(
+            id: job.id,
+            title: job.title,
+            customerId: job.customerId,
+            address: job.address,
+            assignee: job.assignee,
+            assigneeId: _syncContext!.accountId,
+            startsAt: job.startsAt,
+            endsAt: job.endsAt,
+            status: job.status,
+            instructions: job.instructions,
+            quoteId: job.quoteId,
+            revision: job.revision,
+          );
+    if (!localJob.endsAt.isAfter(localJob.startsAt)) {
       throw ArgumentError('Invalid duration');
     }
     await _db.transaction((txn) async {
-      final current = await _get(txn, 'job', job.id);
+      final current = await _get(txn, 'job', localJob.id);
       if (current != null &&
-          (current['revision'] as int? ?? 1) != job.revision - 1) {
+          (current['revision'] as int? ?? 1) != localJob.revision - 1) {
         throw StateError('Jobbet har ändrats. Öppna det igen.');
       }
       if (current != null && current['status'] == JobStatus.completed.name) {
         throw StateError('Avslutade jobb är låsta.');
       }
-      if (job.status == JobStatus.completed) {
+      if (localJob.status == JobStatus.completed) {
         final timer = await _get(txn, 'timer', 'active');
-        if (timer?['jobId'] == job.id) {
+        if (timer?['jobId'] == localJob.id) {
           throw StateError('Stoppa timern innan du avslutar jobbet.');
         }
         final checks = await _jobRecords(txn, 'check', job.id);
@@ -100,16 +484,16 @@ class LocalStore {
       }
       final existing = await txn.query(
         'records',
-        where: 'kind = ?',
-        whereArgs: ['job'],
+        where: '$_scopeWhere AND kind = ? AND deleted_at IS NULL',
+        whereArgs: [..._scopeArgs, 'job'],
       );
-      if (job.quoteId != null) {
-        if (await _get(txn, 'invoice', 'invoice-${job.quoteId}') != null) {
+      if (localJob.quoteId != null) {
+        if (await _get(txn, 'invoice', 'invoice-${localJob.quoteId}') != null) {
           throw StateError('Offerten har redan ett fakturautkast.');
         }
         if (existing.any((r) {
           final other = jsonDecode(r['payload'] as String) as Map;
-          return other['id'] != job.id && other['quoteId'] == job.quoteId;
+          return other['id'] != localJob.id && other['quoteId'] == localJob.quoteId;
         })) {
           throw StateError(
             'Offerten är redan kopplad till ett jobb. Öppna det befintliga jobbet.',
@@ -120,11 +504,11 @@ class LocalStore {
         final other = Job.fromJson(
           jsonDecode(row['payload'] as String) as Map<String, dynamic>,
         );
-        if (job.overlaps(other)) {
+        if (localJob.overlaps(other)) {
           throw StateError('Personen är redan bokad vid den tiden.');
         }
       }
-      await _write(txn, 'job', job.toJson());
+      await _write(txn, 'job', localJob.toJson());
     });
   }
 
@@ -132,8 +516,8 @@ class LocalStore {
     await _db.transaction((txn) async {
       final rows = await txn.query(
         'records',
-        where: 'kind = ? AND id = ?',
-        whereArgs: ['quote', expected.id],
+        where: '$_scopeWhere AND kind = ? AND id = ? AND deleted_at IS NULL',
+        whereArgs: [..._scopeArgs, 'quote', expected.id],
       );
       if (rows.length != 1) throw StateError('Offerten saknas.');
       final current = Quote.fromJson(
@@ -150,8 +534,8 @@ class LocalStore {
     await _db.transaction((txn) async {
       final rows = await txn.query(
         'records',
-        where: 'kind = ? AND id = ?',
-        whereArgs: ['quote', expected.id],
+        where: '$_scopeWhere AND kind = ? AND id = ? AND deleted_at IS NULL',
+        whereArgs: [..._scopeArgs, 'quote', expected.id],
       );
       if (rows.isEmpty) throw StateError('Offerten saknas.');
       final quote = Quote.fromJson(
@@ -163,8 +547,8 @@ class LocalStore {
       }
       final linkedJobs = await txn.query(
         'records',
-        where: 'kind = ?',
-        whereArgs: ['job'],
+        where: '$_scopeWhere AND kind = ? AND deleted_at IS NULL',
+        whereArgs: [..._scopeArgs, 'job'],
       );
       if (linkedJobs.any(
         (r) =>
@@ -178,8 +562,8 @@ class LocalStore {
       final id = 'invoice-${quote.id}';
       final existing = await txn.query(
         'records',
-        where: 'kind = ? AND id = ?',
-        whereArgs: ['invoice', id],
+        where: '$_scopeWhere AND kind = ? AND id = ? AND deleted_at IS NULL',
+        whereArgs: [..._scopeArgs, 'invoice', id],
       );
       if (existing.isNotEmpty) return;
       await _write(txn, 'invoice', {
@@ -203,7 +587,7 @@ class LocalStore {
       if ((await txn.query(
         'meta',
         where: 'key = ?',
-        whereArgs: ['seeded'],
+        whereArgs: [_metaKey('seeded')],
       )).isNotEmpty) {
         return;
       }
@@ -270,7 +654,7 @@ class LocalStore {
         ],
       );
       await _write(txn, 'quote', quote.toJson());
-      await txn.insert('meta', {'key': 'seeded', 'value': 'true'});
+      await txn.insert('meta', {'key': _metaKey('seeded'), 'value': 'true'});
     });
   }
 
@@ -281,8 +665,8 @@ class LocalStore {
   ) async {
     final rows = await db.query(
       'records',
-      where: 'kind = ? AND id = ?',
-      whereArgs: [kind, id],
+      where: '$_scopeWhere AND kind = ? AND id = ? AND deleted_at IS NULL',
+      whereArgs: [..._scopeArgs, kind, id],
     );
     return rows.isEmpty
         ? null
@@ -298,8 +682,8 @@ class LocalStore {
   ) async {
     final rows = await db.query(
       'records',
-      where: 'kind = ?',
-      whereArgs: [kind],
+      where: '$_scopeWhere AND kind = ? AND deleted_at IS NULL',
+      whereArgs: [..._scopeArgs, kind],
     );
     return rows
         .map((r) => jsonDecode(r['payload'] as String) as Map<String, dynamic>)
@@ -349,8 +733,8 @@ class LocalStore {
   Future<void> _checkTime(Transaction txn, TimeEntry entry) async {
     for (final r in await txn.query(
       'records',
-      where: 'kind = ?',
-      whereArgs: ['time'],
+      where: '$_scopeWhere AND kind = ? AND deleted_at IS NULL',
+      whereArgs: [..._scopeArgs, 'time'],
     )) {
       final other = TimeEntry.fromJson(
         jsonDecode(r['payload'] as String) as Map<String, dynamic>,
@@ -411,16 +795,16 @@ class LocalStore {
       // Timer deletion and the resulting time entry are one indivisible write.
       await txn.delete(
         'records',
-        where: 'kind = ? AND id = ?',
-        whereArgs: ['timer', 'active'],
+        where: '$_scopeWhere AND kind = ? AND id = ?',
+        whereArgs: [..._scopeArgs, 'timer', 'active'],
       );
       await _checkTime(txn, entry);
       await _write(txn, 'time', entry.toJson());
       await _write(txn, 'timer', {'id': 'active', 'deleted': true});
       await txn.delete(
         'records',
-        where: 'kind = ? AND id = ?',
-        whereArgs: ['timer', 'active'],
+        where: '$_scopeWhere AND kind = ? AND id = ?',
+        whereArgs: [..._scopeArgs, 'timer', 'active'],
       );
     });
   }
@@ -458,7 +842,7 @@ class LocalStore {
       if ((await txn.query(
         'meta',
         where: 'key = ?',
-        whereArgs: ['catalog-v1'],
+        whereArgs: [_metaKey('catalog-v1')],
       )).isNotEmpty) {
         return;
       }
@@ -494,7 +878,7 @@ class LocalStore {
       ]) {
         await _write(txn, 'price', p);
       }
-      await txn.insert('meta', {'key': 'catalog-v1', 'value': 'true'});
+      await txn.insert('meta', {'key': _metaKey('catalog-v1'), 'value': 'true'});
     });
   }
 
@@ -504,7 +888,7 @@ class LocalStore {
       if ((await txn.query(
         'meta',
         where: 'key = ?',
-        whereArgs: [key],
+        whereArgs: [_metaKey(key)],
       )).isNotEmpty) {
         return;
       }
@@ -524,7 +908,7 @@ class LocalStore {
           'checked': false,
         });
       }
-      await txn.insert('meta', {'key': key, 'value': 'true'});
+      await txn.insert('meta', {'key': _metaKey(key), 'value': 'true'});
     });
   }
 

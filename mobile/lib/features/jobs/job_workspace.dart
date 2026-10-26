@@ -350,7 +350,7 @@ class _JobWorkspaceState extends State<JobWorkspace>
         'Checklista · ${checks.where((c) => c['checked'] == true).length}/${checks.length}',
         [
           const Text(
-            'Intern arbetschecklista. Ersätter inte kontrollprogram eller föreskrivna elinstallationskontroller.',
+            'Intern arbetschecklista. Anpassa punkterna efter uppdragets krav och företagets rutiner.',
             style: TextStyle(fontSize: 12),
           ),
           ClipRRect(

@@ -1,7 +1,15 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/intl.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
+import 'auth/auth_gateway.dart';
+import 'auth/auth_gate.dart';
+import 'auth/company_gateway.dart';
+import 'auth/device_identity.dart';
+import 'config/app_config.dart';
 import 'data/local_store.dart';
 import 'domain/estimate.dart';
 import 'domain/job.dart';
@@ -9,16 +17,60 @@ import 'features/jobs/job_workspace.dart';
 import 'features/jobs/photo_service.dart';
 import 'features/pricebook/pricebook_page.dart';
 import 'features/settings/company_page.dart';
+import 'sync/sync_context.dart';
+import 'sync/background_sync.dart';
+import 'sync/supabase_sync_transport.dart';
+import 'sync/sync_engine.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const FaltApp());
+  final config = AppConfig.fromEnvironment();
+  SupabaseClient? client;
+  BackgroundSyncScheduler? backgroundSyncScheduler;
+  if (config.isLive) {
+    await Supabase.initialize(
+      url: config.supabaseUrl,
+      anonKey: config.publishableKey,
+    );
+    client = Supabase.instance.client;
+    backgroundSyncScheduler = BackgroundSyncScheduler();
+    try {
+      await backgroundSyncScheduler.initialize();
+    } catch (_) {
+      // Foreground auth and sync must remain usable if the platform scheduler
+      // is unavailable on a particular device or build configuration.
+      backgroundSyncScheduler = null;
+    }
+  }
+  runApp(FaltApp(
+    config: config,
+    client: client,
+    backgroundSyncScheduler: backgroundSyncScheduler,
+  ));
 }
 
 class FaltApp extends StatelessWidget {
-  const FaltApp({super.key, this.store,this.clock});
+  const FaltApp({
+    super.key,
+    this.store,
+    this.clock,
+    this.config,
+    this.client,
+    this.authGateway,
+    this.companyGateway,
+    this.deviceIdentity,
+    this.backgroundSyncScheduler,
+  });
+
   final DateTime Function()? clock;
   final LocalStore? store;
+  final AppConfig? config;
+  final SupabaseClient? client;
+  final AuthGateway? authGateway;
+  final CompanyGateway? companyGateway;
+  final DeviceIdentity? deviceIdentity;
+  final BackgroundSyncScheduler? backgroundSyncScheduler;
+
   @override
   Widget build(BuildContext context) => MaterialApp(
     title: 'Fält',
@@ -90,8 +142,38 @@ class FaltApp extends StatelessWidget {
         indicatorColor: Color(0xff1e8b4b),
       ),
     ),
-    home: Workspace(providedStore: store,clock:clock),
+    home: store != null
+        ? Workspace(providedStore: store, clock: clock)
+        : _buildGate(),
   );
+
+  Widget _buildGate() {
+    final selectedConfig = config ?? AppConfig.fromEnvironment();
+    final selectedAuth = authGateway ??
+        (client == null
+            ? DemoAuthGateway()
+            : SupabaseAuthGateway(client: client!));
+    return AuthGate(
+      config: selectedConfig,
+      authGateway: selectedAuth,
+      companyGateway: selectedConfig.isLive
+          ? companyGateway ?? CompanyGateway(client: client!)
+          : null,
+      deviceIdentity: deviceIdentity ?? DeviceIdentity.production(),
+      backgroundSyncScheduler: backgroundSyncScheduler,
+      demoWorkspace: () => Workspace(clock: clock),
+      liveWorkspace: (user, company, deviceId) => Workspace.live(
+        client: client!,
+        syncContext: SyncContext(
+          accountId: user.id,
+          companyId: company.id,
+          deviceId: deviceId,
+        ),
+        clock: clock,
+        onSignOut: selectedAuth.signOut,
+      ),
+    );
+  }
 }
 
 String sek(int ore) =>
@@ -104,14 +186,37 @@ String quoteLabel(QuoteStatus status) => switch (status) {
 };
 
 class Workspace extends StatefulWidget {
-  const Workspace({super.key, this.providedStore,this.clock});
+  const Workspace({
+    super.key,
+    this.providedStore,
+    this.clock,
+    this.syncContext,
+    this.client,
+    this.onSignOut,
+  });
+
+  factory Workspace.live({
+    required SupabaseClient client,
+    required SyncContext syncContext,
+    DateTime Function()? clock,
+    Future<void> Function()? onSignOut,
+  }) => Workspace(
+        client: client,
+        syncContext: syncContext,
+        clock: clock,
+        onSignOut: onSignOut,
+      );
+
   final DateTime Function()? clock;
   final LocalStore? providedStore;
+  final SyncContext? syncContext;
+  final SupabaseClient? client;
+  final Future<void> Function()? onSignOut;
   @override
   State<Workspace> createState() => _WorkspaceState();
 }
 
-class _WorkspaceState extends State<Workspace> {
+class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   LocalStore? store;
   String? error;
   int tab = 0;
@@ -119,17 +224,44 @@ class _WorkspaceState extends State<Workspace> {
   List<Job> jobs = [];
   List<Quote> quotes = [];
   List<Map<String, dynamic>> customers = [], invoices = [];
+  SyncEngine? _syncEngine;
+  Timer? _syncTimer;
+  Future<void>? _syncInFlight;
+  bool _disposed = false;
+  bool _storeClosed = false;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     initialize();
   }
 
+  bool get isLive => widget.syncContext != null;
+
+  Future<void> _closeOwnedStore(LocalStore candidate) async {
+    if (widget.providedStore != null || _storeClosed) return;
+    _storeClosed = true;
+    if (identical(store, candidate)) store = null;
+    await candidate.close();
+  }
+
   Future<void> initialize() async {
+    LocalStore? openedStore;
     try {
-      store = widget.providedStore ?? await LocalStore.open();
-      await store!.seedDemo(at:widget.clock?.call());
-      await store!.ensureCatalog();
+      openedStore = widget.providedStore ??
+          await LocalStore.open(syncContext: widget.syncContext);
+      if (!mounted) {
+        await _closeOwnedStore(openedStore);
+        return;
+      }
+      store = openedStore;
+      if (widget.providedStore == null) _storeClosed = false;
+      if (!isLive) {
+        await store!.seedDemo(at: widget.clock?.call());
+        await store!.ensureCatalog();
+      }
+      if (!mounted) return;
       try {
         await PhotoService(store!).recover();
       } catch (e) {
@@ -139,13 +271,81 @@ class _WorkspaceState extends State<Workspace> {
           ).showSnackBar(SnackBar(content: Text('$e')));
         }
       }
+      if (!mounted) return;
+      if (isLive) {
+        _syncEngine = SyncEngine(
+          store: store!,
+          transport: SupabaseSyncTransport(
+            client: widget.client!,
+            companyId: widget.syncContext!.companyId,
+          ),
+        );
+        await runSync();
+        if (!mounted) return;
+        _startSyncTimer();
+      }
+      if (!mounted) return;
       await refresh();
     } catch (e) {
+      if (openedStore != null) await _closeOwnedStore(openedStore);
       if (mounted) {
         setState(
           () => error = 'Det gick inte att öppna den lokala databasen. $e',
         );
       }
+    }
+  }
+
+  void _startSyncTimer() {
+    _syncTimer?.cancel();
+    if (!isLive || !mounted || _disposed) return;
+    _syncTimer = Timer.periodic(
+      const Duration(minutes: 1),
+      (_) => unawaited(runSync()),
+    );
+  }
+
+  Future<void> runSync() {
+    final inFlight = _syncInFlight;
+    if (inFlight != null) return inFlight;
+    final future = _runSync();
+    _syncInFlight = future;
+    return future.whenComplete(() {
+      if (identical(_syncInFlight, future)) _syncInFlight = null;
+    });
+  }
+
+  Future<void> _runSync() async {
+    final engine = _syncEngine;
+    if (engine == null || !mounted || _disposed) return;
+    try {
+      final result = await engine.runOnce();
+      if (mounted && result.errors.isNotEmpty && result.pushed == 0 && result.pulled == 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Synkningen försöker igen senare.')),
+        );
+      }
+      if (mounted && !_disposed) await refresh();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Synkningen försöker igen senare.')),
+        );
+      }
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!isLive) return;
+    if (state == AppLifecycleState.resumed) {
+      _startSyncTimer();
+      unawaited(runSync());
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.detached) {
+      _syncTimer?.cancel();
+      _syncTimer = null;
     }
   }
 
@@ -215,7 +415,7 @@ class _WorkspaceState extends State<Workspace> {
         ),
       );
     }
-    if (store == null || customers.isEmpty) {
+    if (store == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
     return Scaffold(
@@ -236,6 +436,10 @@ class _WorkspaceState extends State<Workspace> {
                 await syncStatus();
                 return;
               }
+              if (value == 'signOut') {
+                await widget.onSignOut?.call();
+                return;
+              }
               await Navigator.push(
                 context,
                 MaterialPageRoute<void>(
@@ -246,14 +450,16 @@ class _WorkspaceState extends State<Workspace> {
               );
               await refresh();
             },
-            itemBuilder: (_) => const [
-              PopupMenuItem(value: 'prices', child: Text('Prisbok')),
-              PopupMenuItem(value: 'company', child: Text('Företagsuppgifter')),
-              PopupMenuItem(
+            itemBuilder: (_) => [
+              const PopupMenuItem(value: 'prices', child: Text('Prisbok')),
+              const PopupMenuItem(value: 'company', child: Text('Företagsuppgifter')),
+              const PopupMenuItem(
                 value: 'sync',
                 child: Text('Lagring och synkstatus'),
               ),
-              PopupMenuItem(value: 'about', child: Text('Om denna version')),
+              const PopupMenuItem(value: 'about', child: Text('Om denna version')),
+              if (isLive)
+                const PopupMenuItem(value: 'signOut', child: Text('Logga ut')),
             ],
           ),
         ],
@@ -265,8 +471,10 @@ class _WorkspaceState extends State<Workspace> {
               width: double.infinity,
               color: const Color(0xffe5eddb),
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-              child: const Text(
-                'UTVÄRDERINGSVERSION · Lokal data · Ingen serversynk',
+              child: Text(
+                isLive
+                    ? 'INLOGGAD ARBETSYTA · Lokal cache · Synkas till molnet'
+                    : 'UTVÄRDERINGSVERSION · Lokal data · Ingen serversynk',
                 style: TextStyle(fontSize: 11),
               ),
             ),
@@ -347,6 +555,38 @@ class _WorkspaceState extends State<Workspace> {
     children: children,
   );
   Widget buildPage() {
+    if (customers.isEmpty) {
+      return list([
+        title(
+          'Välkommen till din arbetsyta',
+          'Lägg till din första kund för att komma igång.',
+        ),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.people_outline, size: 36),
+                const SizedBox(height: 14),
+                Text(
+                  'Din arbetsyta är redo.',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                const SizedBox(height: 8),
+                const Text('Kunder, offerter och jobb samlas här när du lägger till dem.'),
+                const SizedBox(height: 18),
+                FilledButton.icon(
+                  onPressed: busy ? null : () => editCustomer(),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Lägg till första kund'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ]);
+    }
     final now = widget.clock?.call()??DateTime.now();
     final todays = jobs
         .where((j) => DateUtils.isSameDay(j.startsAt, now))
@@ -355,7 +595,7 @@ class _WorkspaceState extends State<Workspace> {
       0 => list([
         title(
           'Din arbetsdag',
-          'Lindqvist El · ${DateFormat('d MMMM', 'sv').format(now)}',
+          'Din arbetsyta · ${DateFormat('d MMMM', 'sv').format(now)}',
         ),
         Card(
           child: Padding(
@@ -387,7 +627,7 @@ class _WorkspaceState extends State<Workspace> {
         if (quotes.isEmpty) const Text('Skapa din första offert.'),
       ]),
       2 => list([
-        title('Schema', 'Bokningar i datumordning · Erik och Nora'),
+        title('Schema', 'Bokningar i datumordning'),
         ...jobs.map(jobCard),
       ]),
       3 => list([
@@ -656,7 +896,11 @@ class _WorkspaceState extends State<Workspace> {
 
   Future<void> newQuote() async {
     final result = await Navigator.of(context).push<Quote>(
-      MaterialPageRoute(builder: (_) => QuoteEditor(customers: customers)),
+      MaterialPageRoute(
+        builder: (_) => QuoteEditor(
+          customers: customers,
+        ),
+      ),
     );
     if (result != null) await run(() => store!.put('quote', result.toJson()));
   }
@@ -671,7 +915,10 @@ class _WorkspaceState extends State<Workspace> {
   Future<void> newJob({Quote? quote}) async {
     final result = await Navigator.of(context).push<Job>(
       MaterialPageRoute(
-        builder: (_) => JobEditor(customers: customers, quote: quote),
+        builder: (_) => JobEditor(
+          customers: customers,
+          quote: quote,
+        ),
       ),
     );
     if (result != null) await run(() => store!.saveJob(result));
@@ -695,7 +942,9 @@ class _WorkspaceState extends State<Workspace> {
       builder: (context) => AlertDialog(
         title: const Text('Lagring och synkstatus'),
         content: Text(
-          '$count lokala ändringsposter.\n\nÄndringarna finns i SQLite på denna enhet. Ingen server är ansluten och inga poster har bekräftats av molnet. Bilder lagras också lokalt. Radera inte appdata om du vill behålla underlaget.',
+          isLive
+              ? '$count lokala ändringsposter väntar på synkning. Data cachelagras på enheten och bekräftas av molnet när anslutningen fungerar.'
+              : '$count lokala ändringsposter.\n\nÄndringarna finns i SQLite på denna enhet. Ingen server är ansluten och inga poster har bekräftats av molnet. Bilder lagras också lokalt. Radera inte appdata om du vill behålla underlaget.',
         ),
         actions: [
           TextButton(
@@ -711,8 +960,10 @@ class _WorkspaceState extends State<Workspace> {
     context: context,
     builder: (context) => AlertDialog(
       title: const Text('Fält · Teknisk förhandsversion'),
-      content: const Text(
-        'Flutter för Android och senare iOS.\n\nData lagras på denna enhet i SQLite. Outboxen sparar ändringar men ingen synkarbetare är ansluten.\n\nAnvänd bara exempeldata tills företagsinloggning, skyddad lagring, synk och säkerhetskopiering har levererats.',
+      content: Text(
+        isLive
+          ? 'Flutter för Android och senare iOS.\n\nDen här arbetsytan cachelagras lokalt och synkas med företagets Supabase-projekt när du är inloggad.'
+          : 'Flutter för Android och senare iOS.\n\nData lagras på denna enhet i SQLite. Outboxen sparar ändringar men ingen synkarbetare är ansluten.\n\nAnvänd bara exempeldata tills företagsinloggning, skyddad lagring, synk och säkerhetskopiering har levererats.',
       ),
       actions: [
         TextButton(
@@ -722,6 +973,16 @@ class _WorkspaceState extends State<Workspace> {
       ],
     ),
   );
+
+  @override
+  void dispose() {
+    _disposed = true;
+    WidgetsBinding.instance.removeObserver(this);
+    _syncTimer?.cancel();
+    final currentStore = store;
+    if (currentStore != null) unawaited(_closeOwnedStore(currentStore));
+    super.dispose();
+  }
 }
 
 class QuoteEditor extends StatefulWidget {
@@ -815,17 +1076,17 @@ class _QuoteEditorState extends State<QuoteEditor> {
           const SizedBox(height: 16),
           OutlinedButton.icon(
             onPressed: () => setState(() {
-              title.text = 'Spotlights kök';
+              title.text = 'Standarduppdrag';
               lines.clear();
               lines.addAll([
                 EstimateLine(
-                  description: 'Elektriker, arbete',
+                  description: 'Arbete',
                   unitPriceOre: 65000,
                   quantityMilli: 6000,
                   kind: LineKind.labour,
                 ),
                 EstimateLine(
-                  description: 'LED-spotlight',
+                  description: 'Material',
                   unitPriceOre: 39500,
                   quantityMilli: 6000,
                   kind: LineKind.material,
@@ -833,7 +1094,7 @@ class _QuoteEditorState extends State<QuoteEditor> {
               ]);
             }),
             icon: const Icon(Icons.auto_awesome_outlined),
-            label: const Text('Använd mallen Spotlights kök'),
+            label: const Text('Använd standardmall'),
           ),
           const SizedBox(height: 16),
           ...lines.indexed.map(
@@ -1052,7 +1313,7 @@ class _JobEditorState extends State<JobEditor> {
   late final title = TextEditingController(text: widget.quote?.title ?? '');
   late String customerId =
       widget.quote?.customerId ?? widget.customers.first['id'] as String;
-  String person = 'Erik';
+  String person = 'Ansvarig';
   DateTime day = DateTime.now();
   TimeOfDay start = const TimeOfDay(hour: 8, minute: 0),
       end = const TimeOfDay(hour: 10, minute: 0);
@@ -1095,10 +1356,9 @@ class _JobEditorState extends State<JobEditor> {
           DropdownButtonFormField<String>(
             initialValue: person,
             decoration: const InputDecoration(labelText: 'Ansvarig'),
-            items: [
-              'Erik',
-              'Nora',
-            ].map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+            items: const [
+              DropdownMenuItem(value: 'Ansvarig', child: Text('Ansvarig')),
+            ],
             onChanged: (v) => setState(() => person = v!),
           ),
           ListTile(

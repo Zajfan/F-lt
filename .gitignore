@@ -9,7 +9,8 @@ key.properties
 .env
 .env.*
 !.env.example
+.tooling/
+mobile/config/env.json
 .idea/
 *.iml
-mobile/android/
 mobile/ios/

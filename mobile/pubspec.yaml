@@ -10,12 +10,17 @@ dependencies:
   flutter_localizations:
     sdk: flutter
   intl: ^0.20.2
-  sqflite: ^2.4.2
+  sqflite_sqlcipher: ^3.4.1
   path: ^1.9.1
   uuid: ^4.5.1
   image_picker: ^1.2.0
   path_provider: ^2.1.5
+  flutter_secure_storage: ^11.2.0
   url_launcher: ^6.3.2
+  supabase_flutter: ^2.18.3
+  # Compatible with the Flutter 3.35/Dart 3.9 bootstrap target. Upgrade only
+  # together with Flutter; 0.10.x requires a newer Flutter toolchain.
+  workmanager: ^0.9.3
 dev_dependencies:
   flutter_test:
     sdk: flutter

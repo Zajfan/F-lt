@@ -7,6 +7,7 @@ class Job {
     required this.customerId,
     required this.address,
     required this.assignee,
+    this.assigneeId,
     required this.startsAt,
     required this.endsAt,
     this.status = JobStatus.scheduled,
@@ -19,17 +20,22 @@ class Job {
   final String customerId;
   final String address;
   final String assignee;
+  final String? assigneeId;
   final DateTime startsAt;
   final DateTime endsAt;
   final JobStatus status;
   final String instructions;
   final String? quoteId;
   final int revision;
-  bool overlaps(Job other) =>
-      assignee == other.assignee &&
-      id != other.id &&
-      startsAt.isBefore(other.endsAt) &&
-      endsAt.isAfter(other.startsAt);
+  bool overlaps(Job other) {
+    final sameAssignee = assigneeId != null && other.assigneeId != null
+        ? assigneeId == other.assigneeId
+        : assignee == other.assignee;
+    return sameAssignee &&
+        id != other.id &&
+        startsAt.isBefore(other.endsAt) &&
+        endsAt.isAfter(other.startsAt);
+  }
   Job withStatus(JobStatus next) {
     final valid =
         (status == JobStatus.scheduled && next == JobStatus.inProgress) ||
@@ -44,6 +50,7 @@ class Job {
     customerId: customerId,
     address: address,
     assignee: assignee,
+    assigneeId: assigneeId,
     startsAt: startsAt,
     endsAt: endsAt,
     status: status ?? this.status,
@@ -57,6 +64,7 @@ class Job {
     'customerId': customerId,
     'address': address,
     'assignee': assignee,
+    if (assigneeId != null) 'assigneeId': assigneeId,
     'startsAt': startsAt.toIso8601String(),
     'endsAt': endsAt.toIso8601String(),
     'status': status.name,
@@ -64,17 +72,45 @@ class Job {
     'quoteId': quoteId,
     'revision': revision,
   };
-  factory Job.fromJson(Map<String, dynamic> json) => Job(
-    id: json['id'] as String,
-    title: json['title'] as String,
-    customerId: json['customerId'] as String,
-    address: json['address'] as String,
-    assignee: json['assignee'] as String,
-    startsAt: DateTime.parse(json['startsAt'] as String),
-    endsAt: DateTime.parse(json['endsAt'] as String),
-    status: JobStatus.values.byName(json['status'] as String),
-    instructions: json['instructions'] as String? ?? '',
-    quoteId: json['quoteId'] as String?,
-    revision: json['revision'] as int? ?? 1,
-  );
+  factory Job.fromJson(Map<String, dynamic> json) {
+    final assigneeId = _optionalString(json, 'assigneeId') ??
+        _optionalString(json, 'assignee_id');
+    final assignee = _optionalString(json, 'assignee') ?? 'Ansvarig';
+    final status = json['status'] as String?;
+    return Job(
+      id: json['id'] as String,
+      title: json['title'] as String,
+      customerId: (json['customerId'] ?? json['customer_id']) as String,
+      address: _optionalString(json, 'address') ?? '',
+      assignee: assignee,
+      assigneeId: assigneeId,
+      startsAt: DateTime.parse(
+        (json['startsAt'] ?? json['starts_at']) as String,
+      ),
+      endsAt: DateTime.parse(
+        (json['endsAt'] ?? json['ends_at']) as String,
+      ),
+      status: _parseStatus(status),
+      instructions: _optionalString(json, 'instructions') ?? '',
+      quoteId: _optionalString(json, 'quoteId') ??
+          _optionalString(json, 'quote_id'),
+      revision: json['revision'] as int? ?? json['version'] as int? ?? 1,
+    );
+  }
+
+  static String? _optionalString(Map<String, dynamic> json, String key) {
+    final value = json[key];
+    if (value == null) return null;
+    if (value is! String) throw FormatException('$key must be a string.');
+    return value;
+  }
+
+  static JobStatus _parseStatus(String? value) {
+    return switch (value) {
+      'in_progress' || 'inProgress' => JobStatus.inProgress,
+      'scheduled' => JobStatus.scheduled,
+      'completed' => JobStatus.completed,
+      _ => throw FormatException('Invalid job status: $value'),
+    };
+  }
 }

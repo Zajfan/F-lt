@@ -1,8 +1,16 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+}
+
+val releaseKeyPropertiesFile = rootProject.file("key.properties")
+val releaseKeyProperties = Properties()
+if (releaseKeyPropertiesFile.exists()) {
+    releaseKeyPropertiesFile.inputStream().use(releaseKeyProperties::load)
 }
 
 android {
@@ -30,10 +38,30 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        create("release") {
+            keyAlias = releaseKeyProperties.getProperty("keyAlias")
+            keyPassword = releaseKeyProperties.getProperty("keyPassword")
+            storeFile = releaseKeyProperties.getProperty("storeFile")?.let { file(it) }
+            storePassword = releaseKeyProperties.getProperty("storePassword")
+        }
+    }
+
     buildTypes {
         release {
-            // Production signing is intentionally unconfigured. Use debug APKs
-            // for evaluation and a separately provisioned key for store release.
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+            if (releaseKeyPropertiesFile.exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            } else if (gradle.startParameter.taskNames.any {
+                it.contains("Release", ignoreCase = true)
+            }) {
+                throw GradleException(
+                    "Missing android/key.properties; release builds must use a user-owned keystore."
+                )
+            }
         }
     }
 }

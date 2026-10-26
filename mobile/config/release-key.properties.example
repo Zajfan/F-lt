@@ -1,0 +1,6 @@
+# Copy to mobile/android/key.properties and replace every placeholder.
+# Keep the copied file and the keystore outside version control.
+storeFile=/absolute/path/to/falt-release.jks
+storePassword=replace-with-keystore-password
+keyAlias=falt-release
+keyPassword=replace-with-key-password
