@@ -30,7 +30,9 @@ jobs:
           channel: stable
           cache: true
       - name: Generate Android host from pinned Flutter template
-        run: flutter create --platforms=android --org se.falt --project-name falt --no-pub .
+        run: |
+          flutter create --platforms=android --org se.falt --project-name falt --no-pub .
+          rm -f test/widget_test.dart
       - run: flutter pub get
       - run: flutter analyze --no-fatal-infos
       - run: flutter test
