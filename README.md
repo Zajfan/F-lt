@@ -1,33 +1,44 @@
-# Fält
+# Fält — Android-first mobile product
 
-Mobilanpassad, klickbar demo för Lindqvist El i Göteborg.
+Fält is being rebuilt as a Flutter application for Swedish trade businesses. Android is the first delivery platform; iOS signing, builds and store distribution are deferred. This repository is **an early engineering foundation, not a production-ready commercial product**.
 
-## Kör appen
+## Current mobile implementation
 
-Ladda ner `falt-demo.html` och öppna filen i din webbläsare. Den innehåller hela appen och kräver inga installationer.
+- Native Flutter screens: today's jobs, quotes, chronological schedule, invoice drafts and customers.
+- SQLite persistence with transactional writes and a durable outbox. **No server sync worker is connected.**
+- Quote creation with a spotlight template and custom labour/material lines.
+- Integer öre pricing, fractional quantities, VAT and explicitly provisional ROT/RUT calculations.
+- Quote state transitions, manual approval recording, invoice snapshots and idempotent invoice draft creation.
+- Job scheduling with local overlap checks; start and complete jobs.
+- Customer editing and explicit local payment recording.
+- Domain tests for money, tax scope, lifecycle transitions and scheduling boundaries.
+- Initial Supabase tenancy migration, separate from the mobile app. Not deployed or integrated.
 
-Alternativt: kör `python3 -m http.server 3000` i repots katalog och öppna http://localhost:3000.
+No customer identity verification, electronic signature provider, email delivery, legal invoice numbering, real payments, accounting export, authentication or production sync is implemented. Do not use real customer data in this evaluation version.
 
-## Funktioner
+## Run Android
 
-- Två jobb idag, markera klara.
-- Offerter från mall, prisbok och egna rader.
-- ROT 30 % / RUT 50 % på arbete inklusive moms, förenklad demokalkyl för 2026.
-- Kundvy med godkännande, namnteckning och avböjande.
-- Omvandla skickad eller signerad offert till faktura och markera betald.
-- Veckoschema med Erik och Nora, inklusive kontroll av dubbelbokningar.
-- Redigerbara kunder, prisbok och företagsuppgifter.
-- Lokal lagring, JSON-export och återställning.
-- Utskrift / PDF via webbläsarens utskriftsdialog.
+Install Flutter **3.35.7**, Java 17 and the Android SDK. Then:
 
-Börja med Spotlights kök på startsidan.
+```sh
+cd mobile
+flutter create --platforms=android --org se.falt --project-name falt --no-pub .
+flutter pub get
+flutter analyze --no-fatal-infos
+flutter test
+flutter run
+```
 
-## Publicera med GitHub Pages
+The Android host is generated from the pinned Flutter template for now. Before distribution, commit a reviewed host with final application ID, backup policy, permissions, icons and signing configuration. The placeholder `se.falt` namespace is not a verified registered identity.
 
-Öppna Settings → Pages i repot. Under Build and deployment väljer du Deploy from a branch, main och / (root), sedan Save. GitHub visar den färdiga webbadressen när publiceringen är klar.
+## Android APK
 
-## Begränsningar och verifiering
+The **Android evaluation build** GitHub Actions workflow generates the host, analyzes, tests and builds a debug APK. When successful, open the workflow run and download `falt-android-evaluation` from Artifacts. This is a sideloadable debug evaluation build, not a Play Store release. No paid Apple membership is needed for Android development.
 
-Detta är en frontenddemo. Inga verkliga mejl, betalningar, Skatteverket-kontroller eller juridiska e-signeringar görs. Uppgifter sparas i samma webbläsare och delas inte mellan enheter. Använd exempeldata.
+## Architecture and product plan
 
-JavaScript har syntaxkontrollerats med `node --check app.js`. Webbläsartest och visuell verifiering kunde inte slutföras eftersom körmiljön blockerade webbläsarstart och lokal server. Ingen hosted preview har verifierats.
+See [product brief](docs/PRODUCT.md), [architecture](docs/ARCHITECTURE.md), and [delivery status](docs/DELIVERY.md). The original HTML prototype is under `archive/web-demo/` for historical reference and is not the mobile application.
+
+## Verification
+
+Flutter is not installed in the authoring environment, and its network proxy blocks package downloads. Flutter analysis, unit tests, emulator execution and APK compilation have **not been run locally**. The workflow is committed for verification on GitHub; a successful run has not yet been confirmed. No backend migration has been applied.
