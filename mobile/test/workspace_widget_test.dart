@@ -22,7 +22,11 @@ void main(){
     tester.platformDispatcher.textScaleFactorTestValue=scale;
     addTearDown(tester.view.resetPhysicalSize);addTearDown(tester.view.resetDevicePixelRatio);
     addTearDown((){tester.platformDispatcher.textScaleFactorTestValue=1.0;});
-    await tester.pumpWidget(FaltApp(store:store,clock:()=>DateTime(2026,10,26)));await waitFor(tester,find.text('Idag'));
+    await tester.pumpWidget(FaltApp(store:store,clock:()=>DateTime(2026,10,26)));
+    await waitFor(
+      tester,
+      scale > 1 ? find.text('Idag') : find.text('Öppna jobb'),
+    );
   }
   testWidgets('job workspace opens and all five tabs are reachable on a phone',(tester)async{
     await open(tester);final openJob=find.text('Öppna jobb').first;await tester.ensureVisible(openJob);await tester.tap(openJob);await waitFor(tester,find.text('Kund och plats'));
