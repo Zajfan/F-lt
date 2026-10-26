@@ -30,8 +30,10 @@ dev_dependencies:
   sqflite_common_ffi: ^2.3.6
 
 # Workmanager 0.9.2 declares ^0.9.3 for this interface, but 0.9.4 adds
-# foregroundServiceConfig before workmanager_apple implements it.
+# foregroundServiceConfig before the 0.9.2 Android/Apple implementations
+# implement it. Keep the federated packages on their matching versions.
 dependency_overrides:
+  workmanager_android: 0.9.2
   workmanager_platform_interface: 0.9.3
 
 flutter:
