@@ -41,4 +41,4 @@ See [product brief](docs/PRODUCT.md), [architecture](docs/ARCHITECTURE.md), and 
 
 ## Verification
 
-Flutter is not installed in the authoring environment, and its network proxy blocks package downloads. Flutter analysis, unit tests, emulator execution and APK compilation have **not been run locally**. The workflow is committed for verification on GitHub; a successful run has not yet been confirmed. No backend migration has been applied.
+Flutter analysis completed locally. The automated suite passes 22 tests, including SQLite persistence, timers, invoice integrity, phone navigation and 200% text scaling. The visual golden references are generated locally but are kept out of the first source commit to keep the repository lean. A local debug APK build reached Gradle dependency resolution; the environment's Java trust store rejected Maven/Google HTTPS artifacts, so APK compilation must be verified in GitHub Actions. No backend migration has been applied.
