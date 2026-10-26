@@ -20,7 +20,8 @@ void main(){
   Future<void> open(WidgetTester tester,{double scale=1})async{
     tester.view.physicalSize=const Size(390,844);tester.view.devicePixelRatio=1;
     tester.platformDispatcher.textScaleFactorTestValue=scale;
-    addTearDown(tester.view.resetPhysicalSize);addTearDown(tester.view.resetDevicePixelRatio);addTearDown(tester.platformDispatcher.clearTextScaleFactor);
+    addTearDown(tester.view.resetPhysicalSize);addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown((){tester.platformDispatcher.textScaleFactorTestValue=1.0;});
     await tester.pumpWidget(FaltApp(store:store,clock:()=>DateTime(2026,10,26)));await waitFor(tester,find.text('Öppna jobb'));
   }
   testWidgets('job workspace opens and all five tabs are reachable on a phone',(tester)async{
