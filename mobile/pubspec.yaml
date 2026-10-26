@@ -22,11 +22,17 @@ dependencies:
   supabase_flutter: ^2.18.3
   # Compatible with the Flutter 3.35/Dart 3.9 bootstrap target. 0.9.3
   # requires Flutter 3.38 through workmanager_apple.
-  workmanager: ^0.9.2
+  workmanager: 0.9.2
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
   sqflite_common_ffi: ^2.3.6
+
+# Workmanager 0.9.2 declares ^0.9.3 for this interface, but 0.9.4 adds
+# foregroundServiceConfig before workmanager_apple implements it.
+dependency_overrides:
+  workmanager_platform_interface: 0.9.3
+
 flutter:
   uses-material-design: true

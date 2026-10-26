@@ -2,10 +2,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:falt/sync/sync_models.dart';
 
 void main() {
-  const operationId = '11111111-1111-1111-1111-111111111111';
-  const companyId = '22222222-2222-2222-2222-222222222222';
-  const deviceId = '33333333-3333-3333-3333-333333333333';
-  const entityId = '44444444-4444-4444-4444-444444444444';
+  const operationId = '11111111-1111-4111-8111-111111111111';
+  const companyId = '22222222-2222-4222-8222-222222222222';
+  const deviceId = '33333333-3333-4333-8333-333333333333';
+  const entityId = '44444444-4444-4444-8444-444444444444';
 
   test('round trips an upsert operation with a typed payload', () {
     final original = SyncOperation(
@@ -61,7 +61,7 @@ void main() {
       'version': 3,
       'deleted_at': '2026-10-26T10:00:00Z',
       'payload': null,
-      'operation_id': '55555555-5555-5555-5555-555555555555',
+      'operation_id': '55555555-5555-4555-8555-555555555555',
     });
     expect(change.payload, isNull);
     expect(change.cursor, 7);
@@ -220,7 +220,7 @@ void main() {
         'entity_id': entityId,
         'version': 3,
         'deleted_at': null,
-        'operation_id': '55555555-5555-5555-5555-555555555555',
+        'operation_id': '55555555-5555-4555-8555-555555555555',
       }),
       throwsFormatException,
     );

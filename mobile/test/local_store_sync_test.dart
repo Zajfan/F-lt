@@ -335,7 +335,16 @@ void main() {
       change(cursor: 1, kind: SyncEntityKind.customer, id: customerId,
         version: 1, payload: {'id': customerId, 'name': 'Anna'}),
       change(cursor: 2, kind: SyncEntityKind.job, id: jobId,
-        version: 1, payload: {'id': jobId, 'title': 'Visit'}),
+        version: 1, payload: {
+          'id': jobId,
+          'title': 'Visit',
+          'customer_id': customerId,
+          'address': 'Testgatan 1',
+          'assignee_id': accountA,
+          'starts_at': '2026-10-26T08:00:00.000Z',
+          'ends_at': '2026-10-26T10:00:00.000Z',
+          'status': 'scheduled',
+        }),
     ], nextCursor: 2));
     expect((await store.get('customer', customerId))?['name'], 'Anna');
     expect((await store.get('job', jobId))?['title'], 'Visit');
