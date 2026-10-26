@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:falt/data/local_store.dart';
@@ -21,8 +20,7 @@ void main(){
   Future<void> open(WidgetTester tester,{double scale=1})async{
     tester.view.physicalSize=const Size(390,844);tester.view.devicePixelRatio=1;
     tester.platformDispatcher.textScaleFactorTestValue=scale;
-    addTearDown(tester.view.resetPhysicalSize);addTearDown(tester.view.resetDevicePixelRatio);addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
-    final font=FontLoader('Manrope')..addFont(rootBundle.load('assets/fonts/Manrope.ttf'));await font.load();
+    addTearDown(tester.view.resetPhysicalSize);addTearDown(tester.view.resetDevicePixelRatio);addTearDown(tester.platformDispatcher.clearTextScaleFactor);
     await tester.pumpWidget(FaltApp(store:store,clock:()=>DateTime(2026,10,26)));await waitFor(tester,find.text('Öppna jobb'));
   }
   testWidgets('job workspace opens and all five tabs are reachable on a phone',(tester)async{
