@@ -22,10 +22,10 @@ void main(){
     tester.platformDispatcher.textScaleFactorTestValue=scale;
     addTearDown(tester.view.resetPhysicalSize);addTearDown(tester.view.resetDevicePixelRatio);
     addTearDown((){tester.platformDispatcher.textScaleFactorTestValue=1.0;});
-    await tester.pumpWidget(FaltApp(store:store,clock:()=>DateTime(2026,10,26)));await waitFor(tester,find.text('Öppna jobb'));
+    await tester.pumpWidget(FaltApp(store:store,clock:()=>DateTime(2026,10,26)));await waitFor(tester,find.text('Idag'));
   }
   testWidgets('job workspace opens and all five tabs are reachable on a phone',(tester)async{
-    await open(tester);await tester.tap(find.text('Öppna jobb').first);await waitFor(tester,find.text('Kund och plats'));
+    await open(tester);final openJob=find.text('Öppna jobb').first;await tester.ensureVisible(openJob);await tester.tap(openJob);await waitFor(tester,find.text('Kund och plats'));
     expect(find.text('Byte av elcentral'),findsOneWidget);
     for(final tab in ['Tid','Material','Underlag','Fakturering','Översikt']){
       final target=find.text(tab).first;await tester.ensureVisible(target);await tester.tap(target);await tester.pumpAndSettle();expect(tester.takeException(),isNull);
@@ -34,16 +34,13 @@ void main(){
   });
   testWidgets('today and job detail remain usable at 200 percent text',(tester)async{
     await open(tester,scale:2);expect(tester.takeException(),isNull);
-    final openJob = find.text('Öppna jobb').first;
-    await tester.drag(find.byType(ListView).first, const Offset(0, -700));
-    await tester.pumpAndSettle();
-    await tester.tap(openJob);
+    final openJob = find.text('Öppna jobb').first;await tester.ensureVisible(openJob);await tester.tap(openJob);
     await waitFor(tester,find.text('Kund och plats'));
     expect(tester.takeException(),isNull);
     await tester.pumpWidget(const SizedBox.shrink());
   });
   testWidgets('native Flutter job overview reference',(tester)async{
-    await open(tester);await tester.tap(find.text('Öppna jobb').first);await waitFor(tester,find.text('Kund och plats'));
+    await open(tester);final openJob=find.text('Öppna jobb').first;await tester.ensureVisible(openJob);await tester.tap(openJob);await waitFor(tester,find.text('Kund och plats'));
     for(final entry in {'Tid':'time','Material':'materials','Underlag':'documents','Fakturering':'billing'}.entries){
       final target=find.text(entry.key).first;await tester.ensureVisible(target);await tester.tap(target);await tester.pumpAndSettle();
     }
