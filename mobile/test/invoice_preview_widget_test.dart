@@ -51,15 +51,15 @@ void main() {
     expect(find.text('Tak & Måleri AB'), findsOneWidget);
     expect(find.text('Johan Berg'), findsOneWidget);
     expect(find.text('Målningsarbete'), findsOneWidget);
-
-    await tester.ensureVisible(find.text('Att betala'));
-    await tester.pumpAndSettle();
-    expect(find.text('Att betala'), findsOneWidget);
     expect(
       find.text(
         'Förhandsvisning – skickas inte. Detta är hur fakturan är tänkt att se ut för mottagaren.',
       ),
       findsOneWidget,
     );
+
+    await tester.ensureVisible(find.text('Att betala'));
+    await tester.pumpAndSettle();
+    expect(find.text('Att betala'), findsOneWidget);
   });
 }
