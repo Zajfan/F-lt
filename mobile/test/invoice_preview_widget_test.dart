@@ -45,6 +45,9 @@ void main() {
     expect(find.text('Tak & Måleri AB'), findsOneWidget);
     expect(find.text('Johan Berg'), findsOneWidget);
     expect(find.text('Målningsarbete'), findsOneWidget);
+
+    await tester.ensureVisible(find.text('Att betala'));
+    await tester.pumpAndSettle();
     expect(find.text('Att betala'), findsOneWidget);
     expect(
       find.text(
