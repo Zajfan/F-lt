@@ -568,18 +568,19 @@ class LocalStore {
         whereArgs: [..._scopeArgs, 'invoice', id],
       );
       if (existing.isNotEmpty) return;
+      final createdAt = DateTime.now().toUtc();
       await _write(txn, 'invoice', {
         'id': id,
         'quoteId': quote.id,
         'title': quote.title,
         'customerId': quote.customerId,
         'quoteSnapshot': quote.toJson(),
+        'customerSnapshot':
+            await _invoiceCustomerSnapshot(txn, quote.customerId),
+        'companySnapshot': await _invoiceCompanySnapshot(txn),
         'status': 'unpaid',
-        'createdAt': DateTime.now().toUtc().toIso8601String(),
-        'dueAt': DateTime.now()
-            .add(const Duration(days: 30))
-            .toUtc()
-            .toIso8601String(),
+        'createdAt': createdAt.toIso8601String(),
+        'dueAt': createdAt.add(const Duration(days: 30)).toIso8601String(),
       });
     });
   }
@@ -677,6 +678,29 @@ class LocalStore {
 
   Future<Map<String, dynamic>?> get(String kind, String id) =>
       _get(_db, kind, id);
+
+  Future<Map<String, dynamic>> _invoiceCompanySnapshot(
+    DatabaseExecutor db,
+  ) async {
+    return await _get(db, 'company', 'local') ??
+        {
+          'id': 'local',
+          'name': 'Ditt företag',
+          'organisation': '',
+          'address': '',
+          'email': '',
+          'phone': '',
+        };
+  }
+
+  Future<Map<String, dynamic>> _invoiceCustomerSnapshot(
+    DatabaseExecutor db,
+    String customerId,
+  ) async {
+    return await _get(db, 'customer', customerId) ??
+        {'id': customerId, 'name': 'Okänd kund', 'address': ''};
+  }
+
   Future<List<Map<String, dynamic>>> _jobRecords(
     DatabaseExecutor db,
     String kind,
@@ -980,6 +1004,7 @@ class LocalStore {
         lines: preview.lines,
         deduction: preview.deduction,
       );
+      final createdAt = DateTime.now().toUtc();
       await _write(txn, 'invoice', {
         'id': id,
         'jobId': jobId,
@@ -987,15 +1012,15 @@ class LocalStore {
         'title': job.title,
         'customerId': job.customerId,
         'quoteSnapshot': snapshot.toJson(),
+        'customerSnapshot':
+            await _invoiceCustomerSnapshot(txn, job.customerId),
+        'companySnapshot': await _invoiceCompanySnapshot(txn),
         'sourceQuoteSnapshot': quote?.toJson(),
         'sourceTimeIds': preview.timeIds,
         'sourceMaterialIds': preview.materialIds,
         'status': 'unpaid',
-        'createdAt': DateTime.now().toUtc().toIso8601String(),
-        'dueAt': DateTime.now()
-            .add(const Duration(days: 30))
-            .toUtc()
-            .toIso8601String(),
+        'createdAt': createdAt.toIso8601String(),
+        'dueAt': createdAt.add(const Duration(days: 30)).toIso8601String(),
       });
       for (final kind in ['time', 'material']) {
         final ids = kind == 'time' ? preview.timeIds : preview.materialIds;

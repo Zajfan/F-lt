@@ -12,9 +12,11 @@ import 'auth/device_identity.dart';
 import 'config/app_config.dart';
 import 'data/local_store.dart';
 import 'domain/estimate.dart';
+import 'domain/invoice.dart';
 import 'domain/job.dart';
 import 'features/jobs/job_workspace.dart';
 import 'features/jobs/photo_service.dart';
+import 'features/invoices/invoice_preview_page.dart';
 import 'features/pricebook/pricebook_page.dart';
 import 'features/settings/company_page.dart';
 import 'sync/sync_context.dart';
@@ -366,6 +368,33 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     });
   }
 
+  Future<void> previewInvoice(Map<String, dynamic> invoice) async {
+    try {
+      final customerId = invoice['customerId'] as String?;
+      final customer = customerId == null
+          ? null
+          : await store!.get('customer', customerId);
+      final company = await store!.get('company', 'local');
+      final document = InvoiceDocument.fromRecord(
+        invoice,
+        customerFallback: customer,
+        companyFallback: company,
+      );
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => InvoicePreviewPage(document: document),
+        ),
+      );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Fakturan kunde inte förhandsvisas.')),
+        );
+      }
+    }
+  }
+
   Future<void> run(Future<void> Function() operation) async {
     if (busy) return;
     setState(() => busy = true);
@@ -658,6 +687,11 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                   ),
                   Text(
                     'Förfaller ${DateFormat('yyyy-MM-dd').format(DateTime.parse(i['dueAt'] as String))}',
+                  ),
+                  TextButton.icon(
+                    onPressed: () => previewInvoice(i),
+                    icon: const Icon(Icons.visibility_outlined),
+                    label: const Text('Förhandsvisa faktura'),
                   ),
                   if (i['status'] == 'paid')
                     const Chip(label: Text('Betald'))

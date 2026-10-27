@@ -192,6 +192,63 @@ void main() {
       await expectLater(store.saveTime(entry(id: 'late')), throwsStateError);
     },
   );
+  test('invoice creation snapshots company and customer details', () async {
+    final quote = Quote(
+      id: 'snapshot-quote',
+      customerId: 'snapshot-customer',
+      title: 'Fasadrenovering',
+      status: QuoteStatus.sent,
+      lines: [
+        EstimateLine(
+          description: 'Målningsarbete',
+          unitPriceOre: 50000,
+          quantityMilli: 1000,
+          kind: LineKind.labour,
+        ),
+      ],
+    );
+    await store.put('customer', {
+      'id': 'snapshot-customer',
+      'name': 'Anna före faktura',
+      'address': 'Gammal gatuadress 1',
+      'email': 'anna@example.com',
+    });
+    await store.put('company', {
+      'id': 'local',
+      'name': 'Företaget före faktura',
+      'organisation': '559000-1111',
+      'address': 'Företagsgatan 1',
+    });
+    await store.put('quote', Map<String, dynamic>.from(quote.toJson()));
+
+    await store.createInvoice(quote);
+    final invoice = (await store.get('invoice', 'invoice-snapshot-quote'))!;
+    expect(
+      (invoice['customerSnapshot'] as Map)['name'],
+      'Anna före faktura',
+    );
+    expect(
+      (invoice['companySnapshot'] as Map)['organisation'],
+      '559000-1111',
+    );
+
+    await store.put('customer', {
+      'id': 'snapshot-customer',
+      'name': 'Anna efter faktura',
+      'address': 'Ny gatuadress 2',
+    });
+    await store.put('company', {
+      'id': 'local',
+      'name': 'Nya Företaget',
+      'organisation': '559000-2222',
+    });
+    final unchanged = (await store.get(
+      'invoice',
+      'invoice-snapshot-quote',
+    ))!;
+    expect((unchanged['customerSnapshot'] as Map)['name'], 'Anna före faktura');
+    expect((unchanged['companySnapshot'] as Map)['name'], 'Företaget före faktura');
+  });
   test('fixed quote does not charge included actual work twice', () async {
     final quote = Quote(
       id: 'q',

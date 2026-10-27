@@ -6,9 +6,12 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
 import '../../data/local_store.dart';
+import '../../domain/estimate.dart';
+import '../../domain/invoice.dart';
 import '../../domain/job.dart';
 import '../../domain/work_log.dart';
 import '../../shared/format.dart';
+import '../invoices/invoice_preview_page.dart';
 import 'photo_service.dart';
 import 'work_entry_forms.dart';
 
@@ -651,18 +654,30 @@ class _JobWorkspaceState extends State<JobWorkspace>
               '${b.pendingApproval} tillägg väntar på godkännande. Registrera svaret under Tid eller Material före fakturering.',
             ),
           ),
-        if (invoice != null)
+        if (invoice != null) ...[
           const Padding(
             padding: EdgeInsets.only(top: 12),
-            child: Text(
-              'Fakturautkast finns redan. Öppna Fakturor från huvudmenyn.',
-            ),
-          )
+            child: Text('Fakturautkast finns redan.'),
+          ),
+          OutlinedButton.icon(
+            onPressed: previewInvoice,
+            icon: const Icon(Icons.visibility_outlined),
+            label: const Text('Förhandsvisa faktura'),
+          ),
+        ]
         else if (!locked)
-          const Padding(
-            padding: EdgeInsets.only(top: 12),
-            child: Text('Avsluta jobbet för att skapa fakturautkastet.'),
-          )
+          ...[
+            const Padding(
+              padding: EdgeInsets.only(top: 12),
+              child: Text('Avsluta jobbet för att skapa fakturautkastet.'),
+            ),
+            if (b.lines.isNotEmpty)
+              OutlinedButton.icon(
+                onPressed: previewInvoice,
+                icon: const Icon(Icons.visibility_outlined),
+                label: const Text('Förhandsvisa faktura'),
+              ),
+          ]
         else
           Padding(
             padding: const EdgeInsets.only(top: 16),
@@ -876,6 +891,44 @@ class _JobWorkspaceState extends State<JobWorkspace>
       await perform(() async {
         await widget.store.createJobInvoice(job!.id);
       });
+    }
+  }
+
+  Future<void> previewInvoice() async {
+    try {
+      final company = await widget.store.get('company', 'local');
+      final selected = invoice;
+      final document = selected == null
+          ? InvoiceDocument.draft(
+              invoiceId: 'invoice-job-${job!.id}',
+              title: job!.title,
+              quote: Quote(
+                id: 'job-${job!.id}',
+                customerId: job!.customerId,
+                title: job!.title,
+                lines: billing!.lines,
+                deduction: billing!.deduction,
+              ),
+              customer: customer,
+              company: company,
+            )
+          : InvoiceDocument.fromRecord(
+              selected,
+              customerFallback: customer,
+              companyFallback: company,
+            );
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => InvoicePreviewPage(document: document),
+        ),
+      );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Fakturan kunde inte förhandsvisas.')),
+        );
+      }
     }
   }
 }
