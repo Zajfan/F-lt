@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/intl.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 import 'auth/auth_gateway.dart';
@@ -26,6 +27,7 @@ import 'sync/sync_engine.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await initializeDateFormatting('sv');
   final config = AppConfig.fromEnvironment();
   SupabaseClient? client;
   BackgroundSyncScheduler? backgroundSyncScheduler;

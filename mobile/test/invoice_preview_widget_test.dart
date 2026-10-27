@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:falt/domain/estimate.dart';
 import 'package:falt/domain/invoice.dart';
 import 'package:falt/features/invoices/invoice_preview_page.dart';
 
 void main() {
+  setUpAll(() => initializeDateFormatting('sv'));
+
   testWidgets('invoice preview shows the recipient-facing document', (
     tester,
   ) async {
@@ -36,6 +40,8 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         locale: const Locale('sv'),
+        supportedLocales: const [Locale('sv')],
+        localizationsDelegates: GlobalMaterialLocalizations.delegates,
         home: InvoicePreviewPage(document: document),
       ),
     );
