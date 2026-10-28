@@ -57,6 +57,8 @@ When the service is ready for real customers, register the appropriate business 
 
 ## Swedish tax and business caution
 
-There is no blanket rule that all hobby income is tax-free up to a fixed annual amount. Skatteverket assesses whether activity is hobby or näringsverksamhet based on the actual circumstances, including purpose, continuity, independence and profit intention. Surplus from hobby activity can be taxable and must be documented. VAT registration, accounting, consumer rules and payment-provider requirements are separate questions and thresholds can change.
+Moms and income tax are separate. For a business established in Sweden, the small-business VAT exemption can apply when annual taxable turnover is at most 120,000 SEK under the current rules. If turnover passes the applicable limit, VAT registration is required. The limit concerns VAT turnover and does not make income tax-free. You can also choose voluntary VAT registration, and cross-border digital sales can trigger separate EU VAT/OSS rules.
 
-Before accepting real subscriptions, ask Skatteverket or an accountant how the planned activity should be classified and reported. Keep a ledger from day one: Stripe fees, hosting, software, domain, advertising, refunds and every payout.
+Whether the activity is hobby or näringsverksamhet is assessed from the actual circumstances, including purpose, continuity, independence and profit intention. Surplus from hobby activity can be taxable and must be documented. Accounting, consumer rules, payment-provider requirements and VAT are separate questions.
+
+Before accepting real subscriptions, confirm the current rules with Skatteverket or an accountant. Keep a ledger from day one: Stripe fees, hosting, software, domain, advertising, refunds, taxable turnover and every payout. If operating under the small-business VAT exemption, use the legally required wording on invoices and do not charge VAT until registered.
