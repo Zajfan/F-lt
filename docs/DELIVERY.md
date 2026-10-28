@@ -17,8 +17,9 @@ Implemented across Tasks 1–9 plus the background scheduler:
 - Android WorkManager scheduling with a top-level background isolate that reuses the same outbox/sync engine, requires network connectivity, and retries through platform backoff.
 - Job detail fields (`address`, `instructions`, and provider-neutral `quote_id`) carried through the SQL and mobile wire contract, including normalization of legacy local outbox payloads.
 - SQLCipher-backed local storage with a per-installation key held in platform secure storage; FFI test factories remain injectable without a platform key.
+- Recipient-facing invoice preview with immutable customer/company snapshots for new invoice drafts and fallback support for older local invoice records.
 
-The source slice is not the same as a connected production feature: a real Supabase project/configuration, production RLS validation, lockfile generation, and device installation testing remain open.
+The source slice is not the same as a connected production feature: a real Supabase project/configuration, production RLS validation, and device installation testing remain open.
 
 The GitHub Actions workflow `.github/workflows/android.yml` is the toolchain-enabled evaluation path. It runs on `ubuntu-latest`, resolves dependencies, runs analyzer/tests, builds a demo debug APK, and uploads it as `falt-android-demo-debug`. A local Flutter/Android installation is not required to obtain that artifact.
 
@@ -48,13 +49,13 @@ flutter test
 flutter build apk --debug --dart-define-from-file=config/env.json
 ```
 
-The current CLI environment lacks `psql`, `flutter`, `dart`, `adb`, and `sdkmanager`. `mobile/pubspec.lock` has not been regenerated after adding `supabase_flutter`, `workmanager`, `sqflite_sqlcipher`, and `flutter_secure_storage`. Consequently, the SQL contract, dependency resolution, Dart/Flutter runtime tests, analyzer, and local APK build have not passed here; no local pass result or test count is claimed. The GitHub Actions workflow must be used and observed before claiming a passing APK build.
+The current CLI environment lacks `psql`, `flutter`, `dart`, `adb`, and `sdkmanager`. The committed `mobile/pubspec.lock` and the GitHub workflow provide the reproducible CI path, but SQL execution, local Flutter runtime tests, analyzer execution and local APK compilation have not passed in this environment. The latest supplied CI run reported 104 tests passing before the final invoice-preview test assertion was corrected in commit `5e6a5fa`; the workflow must be rerun before claiming a fully passing build.
 
 ## Required gates before a company pilot
 
 - Provision a real Supabase project with Auth, memberships, migrations, reviewed RLS/RPC privileges, and a European data-processing posture appropriate to the deployment.
 - Run the SQL contract against a disposable database and resolve any PostgreSQL/Supabase compatibility findings; include cross-company, role, replay, conflict, cursor, and tombstone coverage.
-- Regenerate and review `mobile/pubspec.lock` with `flutter pub get` in the pinned Flutter environment.
+- Review the committed `mobile/pubspec.lock` and keep dependency resolution pinned to the Flutter 3.35.7 CI environment.
 - Run Flutter tests and `flutter analyze --no-fatal-infos`; install the debug APK on a physical Android device and check small screens, 200% text, TalkBack, keyboard, process death, permission denial, airplane mode, logout, and retry recovery.
 - Verify authenticated app wiring and WorkManager scheduling on a physical Android device after account/company cache partitioning, device-tagged outbox handling, backup policy, and recovery behavior are reviewed.
 - Create and securely back up the company-owned Android keystore with `tooling/create-release-keystore.sh` (or configure the example manually), and verify a signed release APK before store submission.

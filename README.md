@@ -9,7 +9,7 @@ Fält is trade-neutral. The shared workflow supports configurable profiles for r
 - Native Flutter screens for today's jobs, quotes, schedules, invoice drafts and customers.
 - SQLite persistence with transactional business writes and a durable, scoped sync outbox.
 - A first customer/job sync vertical slice: Supabase/Postgres RPCs, typed Dart protocol models, account/company-scoped SQLite records, conflicts and cursors, device-tagged outbox operations, a transport-independent sync engine, and a Supabase RPC adapter.
-- Quote calculations, job scheduling and progression, invoice snapshots, manual payment recording, and domain models for the existing evaluation flows.
+- Quote calculations, job scheduling and progression, invoice snapshots, a recipient-facing invoice preview, manual payment recording, and domain models for the existing evaluation flows.
 - Fält-owned invoicing remains the product direction. This customer/job sync slice has no Fortnox or Spiris dependency.
 
 Supabase/Postgres is authoritative for synchronized customer and job state. SQLCipher-backed SQLite is a local cache plus pending-operation store, with its key kept in platform secure storage; it is not cloud durability. Authenticated app wiring, foreground retry, and an Android WorkManager scheduler are implemented in source; production deployment and device verification are not complete. Do not use real customer data in this evaluation version.
@@ -20,7 +20,7 @@ Versioned push conflicts retain the server version and payload in local `sync_co
 
 The server uses Supabase Auth identity and company membership. Client records, conflicts, and cursors are scoped by authenticated `account_id` and `company_id`; outbox operations additionally carry `device_id`. RPCs accept only the authenticated session and an authorized company. Customer writes require owner/admin authority. Managers can manage company jobs; workers may update existing jobs assigned to themselves and may create a new job only when the submitted assignee is themselves. Mobile configuration may contain only the publishable/anon Supabase key; service-role secrets must never be shipped in an APK.
 
-The current gaps are encrypted-store upgrade/recovery validation for pre-release plaintext caches, backup policy, production Supabase/RLS validation, a provisioned production project, and release/device verification. Customer identity verification, external signing, email delivery, legal invoice numbering, real payments, accounting export, and production sync deployment are also future work.
+The current gaps are encrypted-store upgrade/recovery validation for pre-release plaintext caches, backup policy, production Supabase/RLS validation, a provisioned production project, and release/device verification. Customer identity verification, external signing, email delivery, legal invoice numbering, real payments, accounting export, and production sync deployment are also future work. The invoice preview is a visual draft and does not itself provide legal invoice issuance or delivery.
 
 ## Run Android
 
@@ -83,7 +83,7 @@ See [product brief](docs/PRODUCT.md), [architecture](docs/ARCHITECTURE.md), and 
 
 ## Verification status
 
-The current CLI environment lacks `psql`, `flutter`, `dart`, `adb`, and `sdkmanager`. `mobile/pubspec.lock` has not been regenerated after adding `supabase_flutter`, `workmanager`, `sqflite_sqlcipher`, and `flutter_secure_storage`. Therefore SQL execution, dependency resolution, Dart/Flutter runtime tests, analyzer results, and local APK compilation are pending; no local SQL/runtime/analyzer/dependency/APK result is passing in this environment. GitHub Actions is the intended toolchain-enabled APK path and must pass before an artifact is treated as usable. No test count is claimed. `./tooling/doctor.sh` reports the exact missing tools.
+The current CLI environment lacks `psql`, `flutter`, `dart`, `adb`, and `sdkmanager`, so local SQL execution, Flutter runtime tests, analyzer execution and APK compilation remain unavailable here. `mobile/pubspec.lock` is committed and GitHub Actions is the intended toolchain-enabled verification path. The latest supplied CI run reached the invoice preview test with 104 other tests passing; commit `5e6a5fa` corrected the remaining offstage assertion, so the workflow must be rerun before this change is treated as fully verified. `./tooling/doctor.sh` reports the exact missing tools.
 
 The exact verification commands for this slice are:
 
