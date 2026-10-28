@@ -13,14 +13,14 @@ concurrency:
   cancel-in-progress: true
 jobs:
   android:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     defaults:
       run:
         working-directory: mobile
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -45,7 +45,7 @@ jobs:
         run: flutter test
       - name: Build demo APK
         run: flutter build apk --debug --dart-define=FALT_DEMO_MODE=true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: falt-android-demo-debug
           path: mobile/build/app/outputs/flutter-apk/app-debug.apk
